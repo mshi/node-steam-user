@@ -33,6 +33,8 @@ SteamUser.prototype.enableTwoFactor = function(callback) {
 				delete body[i];
 			}
 		}
+		// keep the original device hash that was used
+		body.device_id = 'android:' + hash;
 
 		callback(body);
 	});
