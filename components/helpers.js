@@ -21,11 +21,21 @@ exports.steamID = function(input) {
 
 /**
  * Convert an IP in integer notation to dotted-decimal notation
- * @param input
+ * @param {int} input
  * @returns {string}
  */
 exports.ipIntToString = function(input) {
 	return ((input >> 24) & 0xFF) + "." + ((input >> 16) & 0xFF) + "." + ((input >> 8) & 0xFF) + "." + (input & 0xFF);
+};
+
+/**
+ * Convert an IP in dotted-decimal notation to integer notation
+ * @param {string} input
+ * @returns {int}
+ */
+exports.ipStringToInt = function(input) {
+	var parts = input.split('.');
+	return ((parts[0] << 24) | (parts[1] << 16) | (parts[2] << 8) | parts[3]) >>> 0;
 };
 
 /**
@@ -45,4 +55,26 @@ exports.getInternalMachineID = function() {
 	var hash = Crypto.createHash('md5');
 	hash.update(id);
 	return hash.digest('hex');
+};
+
+/**
+ * Get an Error object for a particular EResult
+ * @param {int} eresult
+ * @returns {null|Error}
+ */
+exports.eresultError = function(eresult) {
+	if (eresult == SteamUser.EResult.OK) {
+		// no error
+		return null;
+	}
+
+	var err = new Error("Error " + eresult);
+	for (var i in SteamUser.EResult) {
+		if (SteamUser.EResult.hasOwnProperty(i) && SteamUser.EResult[i] == eresult) {
+			err.message = i;
+		}
+	}
+
+	err.eresult = eresult;
+	return err;
 };

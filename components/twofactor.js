@@ -3,22 +3,16 @@ var SteamTotp = require('steam-totp');
 
 /**
  * Start the process to enable TOTP two-factor authentication for your account
- * @deprecated Use node-steamcommunity instead https://mckay.media/NIi0Q
  * @param {function} callback - Called when an activation email has been sent. Params are status (an EResult), sharedSecret (a Buffer), and revocationCode (a string)
  */
 SteamUser.prototype.enableTwoFactor = function(callback) {
 	var self = this;
 
-	// Create a random device ID hash
-	var hash = require('crypto').createHash('sha1');
-	hash.update(Math.random().toString());
-	hash = hash.digest('hex');
-
 	this._sendUnified("TwoFactor.AddAuthenticator#1", {
 		"steamid": self.steamID.getSteamID64(),
 		"authenticator_time": Math.floor(Date.now() / 1000),
 		"authenticator_type": 1,
-		"device_identifier": 'android:' + hash,
+		"device_identifier": SteamTotp.getDeviceID(self.steamID),
 		"sms_phone_id": "1"
 	}, false, function(body) {
 		body.shared_secret = body.shared_secret ? body.shared_secret.toBuffer().toString('base64') : null;
@@ -42,7 +36,6 @@ SteamUser.prototype.enableTwoFactor = function(callback) {
 
 /**
  * Finalize the process of enabling TOTP two-factor authentication
- * @deprecated Use node-steamcommunity instead https://mckay.media/NIi0Q
  * @param {Buffer} secret - Your shared secret
  * @param {string} activationCode - The activation code you got in your email
  * @param {function} callback - Called with a single Error argument, or null on success
@@ -52,7 +45,15 @@ SteamUser.prototype.finalizeTwoFactor = function(secret, activationCode, callbac
 	var diff = 0;
 
 	var self = this;
-	finalize();
+	SteamTotp.getTimeOffset(function(err, offset, latency) {
+		if (err) {
+			callback(err);
+			return;
+		}
+
+		diff = offset;
+		finalize();
+	});
 
 	function finalize() {
 		var code = SteamTotp.generateAuthCode(secret, diff);
@@ -88,5 +89,5 @@ SteamUser.prototype.finalizeTwoFactor = function(secret, activationCode, callbac
  * @deprecated No longer works. Use node-steamcommunity instead: https://mckay.media/UnsG7
  */
 SteamUser.prototype.disableTwoFactor = function() {
-	throw new Error("This method no longer works. See https://mckay.media/UnsG7 for alternative usage.");
+	throw new Error("This method no longer works. See https://mckay.media/UnsG7 for alternative.");
 };

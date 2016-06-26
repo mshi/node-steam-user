@@ -7,38 +7,49 @@
 [![paypal](https://img.shields.io/badge/paypal-donate-yellow.svg)](https://www.paypal.com/cgi-bin/webscr?cmd=_donations&business=N36YVAT42CZ4G&item_name=node%2dsteam%2duser&currency_code=USD)
 
 SteamUser is a handler module for [node-steam](https://github.com/seishun/node-steam) version 1.0.0 or greater.
+It also works with [node-steam-client](https://github.com/DoctorMcKay/node-steam-client).
 
 It's designed to be a self-contained module which provides all the functionality expected of a Steam user client.
 
 [Subscribe to release announcements](https://github.com/DoctorMcKay/node-steam-user/releases.atom)
 
-# Static Properties
+**Have a question about the module or coding in general? *Do not create a GitHub issue.* GitHub issues are for feature requests and bug reports. Instead, post in the [dedicated forum](https://dev.doctormckay.com/forum/7-node-steam-user/). Such issues may be ignored!**
+
+# Contents
+- [Enums](#enums-)
+- [Static Properties](#static-properties-)
+- [Static Methods](#static-methods-)
+- [Options](#options-)
+- [Properties](#properties-)
+- [Methods](#methods-)
+- [Events](#events-)
+
+# Enums [^](#contents)
+
+There are a lot of enums used in Steam. They're all available directly from `SteamUser`. For example, access `EResult`
+using `SteamUser.EResult`.
+
+All enums can be viewed [on GitHub](https://github.com/DoctorMcKay/node-steam-user/tree/master/enums).
+
+Additionally, for convenience, the name of an enum value is available from any enum at the key identified by the enum
+value. For example, given an EResult of `88` you can translate it using `SteamUser.EResult[88]` which gives you
+the string `TwoFactorCodeMismatch`.
+
+# Static Properties [^](#contents)
 
 Static properties, or properties attached directly to `SteamUser`, are accessed on the root module and not on instantiated handler instances.
 
 ### Steam
 
-The `node-steam` module installation used by `SteamUser`. You can use this in place of `require('steam')` if you'd like to avoid duplicate installations.
-
-Example of using `EResult`:
-
-```js
-var SteamUser = require('steam-user');
-var ok = SteamUser.Steam.EResult.OK;
-```
-
-### ECurrencyCode
-
-An up-to-date enum of Steam's many currencies. [View here](https://github.com/DoctorMcKay/node-steam-user/blob/bde87d94bcafd870bd460694d036d1c88121da87/components/utility.js#L3-L37)
-
-Example:
+The `node-steam-client` module installation used by `SteamUser`. You can use this in place of `require('steam-client')`
+if you'd like to avoid duplicate installations. As of v3.7.0, all enums are built into `SteamUser` so you probably won't
+need to use this. Example of using `EResult`:
 
 ```js
-var SteamUser = require('steam-user');
-var usd = SteamUser.ECurrencyCode.USD;
+var ok = SteamUser.EResult.OK;
 ```
 
-# Static Methods
+# Static Methods [^](#contents)
 
 Static methods, or functions attached directly to `SteamUser`, are called on the root module and not on instantiated handler instances.
 
@@ -62,7 +73,7 @@ Generates a 5-digit alphanumeric Steam Guard code for use with two-factor mobile
 
 **Deprecated. Use [`steam-totp`](https://www.npmjs.com/package/steam-totp) instead.**
 
-# Options
+# Options [^](#contents)
 
 There are a number of options which can control the behavior of the `SteamUser` object. They are:
 
@@ -148,7 +159,46 @@ Added in 1.13.0.
 
 Defaults to `["SteamUser Hash BB3 {account_name}", "SteamUser Hash FF2 {account_name}", "SteamUser Hash 3B3 {account_name}"]`.
 
-# Properties
+### enablePicsCache
+
+If enabled, then `node-steam-user` will internally cache data about all apps and packages that it knows about.
+Currently, `node-steam-user` "knows about" an app/package if:
+
+- Packages
+    - You own it
+    - You request info about it via `getProductInfo`
+- Apps
+    - It's in a known package
+    - You request info about it via `getProductInfo`
+    - A friend who is online plays the app
+    - You request info about an online user who is playing it via `getPersonas`
+
+This option is required in order to use several methods and events. This works when logging in anonymously.
+
+Added in 3.3.0.
+
+Defaults to `false`.
+
+### picsCacheAll
+
+If enabled, `enablePicsCache` is enabled, and `changelistUpdateInterval` is nonzero, then apps and packages which get
+updated while your bot is running will also be added to the cache. Default behavior is to only cache apps and packages
+that are "known" via the above criteria.
+
+Added in 3.3.0.
+
+Defaults to `false`.
+
+### changelistUpdateInterval
+
+If `enablePicsCache` is enabled, then `node-steam-user` will automatically request app/package changes (via
+`getProductChanges`) for known apps and packages, and update the internal cache when they update. Set to `0` to disable.
+
+Added in 3.3.0.
+
+Defaults to `60000`.
+
+# Properties [^](#contents)
 
 ### client
 
@@ -172,7 +222,25 @@ Only defined if you're currently logged on. This is your public IP as reported b
 
 **v1.12.0 or later is required to use this property**
 
-Only defined if you're currently logged on. This is you cell (region ID) on the Steam network.
+Only defined if you're currently logged on. This is your cell (region ID) on the Steam network.
+
+### vanityURL
+
+**v3.7.0 or later is required to use this property**
+
+Only defined if you're currently logged on. This is your vanity URL (the part that goes after `/id/` in your profile
+URL). Falsy if you don't have one.
+
+### accountInfo
+
+An object containing information about your account. `null` until [`accountInfo`](#accountinfo-1) is emitted.
+
+- `name` - Your account's Steam (persona) name
+- `country` - The character code from which you're logging in (via GeoIP), e.g. "US"
+- `authedMachines` - How many machines are authorized to login to your account with Steam Guard
+- `flags` - Your account's bitwise [flags](https://github.com/SteamRE/SteamKit/blob/b80cdf5249891d54c655e39262d8267c7b40b249/Resources/SteamLanguage/enums.steamd#L81-L113)
+- `facebookID` - If your account is linked with Facebook, this is your Facebook account ID
+- `facebookName` - If your account is linked with Facebook, this is your (real) name on Facebook
 
 ### emailInfo
 
@@ -249,22 +317,32 @@ An object containing your friend groups (in the official client, these are calle
 - `name` - A `string` containing the name of the group.
 - `members` - An array containing `SteamID` objects for the members of this friend group.
 
-# Methods
+### picsCache
+
+**v3.3.0 or later is required to use this property**
+
+An object containing cached data about known apps and packages. Only useful if the `enablePicsCache` option is `true`.
+- `changenumber` - The last known changenumber
+- `apps` - An object whose keys are AppIDs and values are objects identical to those returned by `getProductInfo`
+- `packages` - An object whose keys are PackageIDs and values are objects identical to those returned by `getProductInfo`
+
+# Methods [^](#contents)
 
 ### Constructor([client][, options])
 - `client` - An optional `SteamClient` to use to connect to Steam. If not provided, one will be created automatically.
-- `options` - An optional object containing zero or more [options](#options) to set for this `SteamUser`.
+- `options` - An optional object containing zero or more [options](#options-) to set for this `SteamUser`.
 
-Constructs a new `SteamUser`. If you allow `SteamUser` to create its own `SteamClient`, then `SteamUser` will automatically save and reload the CM server list.
+Constructs a new `SteamUser`. If you allow `SteamUser` to create its own `SteamClient`, then `SteamUser` will
+automatically save and reload the CM server list.
 
 ### setOption(option, value)
 - `option` - The name of the option to set
 - `value` - The value to set for this option
 
-Changes the value of an [option](#options).
+Changes the value of an [option](#options-).
 
 ### setOptions(options)
-- `options` - An object containing zero or more [options](#options).
+- `options` - An object containing zero or more [options](#options-).
 
 ### setSentry(sentry)
 - `sentry` - A Buffer containing the binary sentry file, binary SHA1 hash, or `null` to unset the set sentry
@@ -273,7 +351,8 @@ If you aren't using `dataDirectory` or you just want to provide your own sentry 
 
 You should call this before calling `logOn`. When you log on, `SteamUser` will use this sentry file.
 
-You can provide either an entire sentryfile (preferred), or a Buffer containing the binary SHA1 hash of your sentryfile (e.g. the output of the `sentry` event in node-steam 0.6.x).
+You can provide either an entire sentryfile (preferred), or a Buffer containing the binary SHA1 hash of your sentryfile
+(e.g. the output of the `sentry` event in node-steam 0.6.x).
 
 ### logOn([details])
 - `details` - An object containing details for this logon
@@ -283,9 +362,10 @@ You can provide either an entire sentryfile (preferred), or a Buffer containing 
 	- `twoFactorCode` - If you have a Steam Guard mobile two-factor authentication code, you can provide it here. You might not need to, see the [`steamGuard`](#steamguard) event. (Added in 1.9.0)
 	- `loginKey` - If logging into an account with a login key, this is the account's login key
 	- `rememberPassword` - `true` if you want to get a login key which can be used in lieu of a password for subsequent logins. `false` or omitted otherwise.
-	- `logonID` - A number to identify this login. The official Steam client derives this from your machine's private IP (it's the `obfustucated_private_ip` field in `CMsgClientLogOn`). If you try to logon twice to the same account from the same public IP with the same `logonID`, the first session will be kicked with reason `Steam.EResult.LogonSessionReplaced`. Defaults to `0` if not specified.
+	- `logonID` - A number to identify this login. The official Steam client derives this from your machine's private IP (it's the `obfustucated_private_ip` field in `CMsgClientLogOn`). If you try to logon twice to the same account from the same public IP with the same `logonID`, the first session will be kicked with reason `SteamUser.EResult.LogonSessionReplaced`. Defaults to `0` if not specified.
 
-Logs onto Steam. The `SteamClient` should **not** be connected. Omit the `details` object if you wish to login to an anonymous user account.
+Logs onto Steam. The `CMClient`/`SteamClient` should **not** be already logged on, although as of v3.4.0 it can be
+connected. Omit the `details` object if you wish to login to an anonymous user account.
 
 ### logOff()
 
@@ -293,7 +373,8 @@ Logs you off of Steam and closes the connection.
 
 ### webLogOn()
 
-`SteamUser` will automatically log onto steamcommunity.com when a successful connection to Steam is established (as an individual user), but you can call `webLogOn()` to create a new session if your old one expires or becomes invalid.
+`SteamUser` will automatically log onto steamcommunity.com when a successful connection to Steam is established (as an
+individual user), but you can call `webLogOn()` to create a new session if your old one expires or becomes invalid.
 
 Listen for the [`webSession`](#websession) event to get your cookies.
 
@@ -302,26 +383,25 @@ Listen for the [`webSession`](#websession) event to get your cookies.
 - `password` - The password for your new account
 - `email` - The contact email for your new account
 - `callback` - Called when the account is either created or an error occurs
-	- `result` - A value from `Steam.EResult`.
-		- `Steam.EResult.OK` if the account was created successfully
-		- `Steam.EResult.DuplicateName` if there is already an account with that username
-		- `Steam.EResult.IllegalPassword` if your password is too weak or otherwise bad
+	- `result` - A value from `SteamUser.EResult`.
+		- `SteamUser.EResult.OK` if the account was created successfully
+		- `SteamUser.EResult.DuplicateName` if there is already an account with that username
+		- `SteamUser.EResult.IllegalPassword` if your password is too weak or otherwise bad
 		- or something else on another error
 	- `steamid` - If successful, this is a `SteamID` object containing the new account's SteamID
 
-Creates a new individual user Steam account. You must be logged on either anonymously or as an existing individual user to use this.
+Creates a new individual user Steam account. You must be logged on either anonymously or as an existing individual user
+to use this.
 
 ### requestValidationEmail([callback])
 - `callback` - Optional. Called when a response is available
-	- `result` - A value from `Steam.EResult`. `Steam.EResult.OK` if the mail was sent successfully.
+	- `result` - A value from `SteamUser.EResult`. `SteamUser.EResult.OK` if the mail was sent successfully.
 
 Requests Steam to send you a validation email to your registered email address.
 
 ### enableTwoFactor(callback)
 - `callback` - Required. Called when the activation email has been sent.
 	- `response` - An object containing the response data
-
-#### This method is deprecated and may be removed in a future major version. [Use node-steamcommunity instead.](https://mckay.media/NIi0Q)
 
 **v2.0.0 or later is required to use this method**
 
@@ -342,8 +422,6 @@ Properties of note in the `response` object:
 - `callback` - Required.
 	- `err` - An `Error` object on failure, or `null` on success
 
-#### This method is deprecated and may be removed in a future major version. [Use node-steamcommunity instead.](https://mckay.media/NIi0Q)
-
 **v2.0.0 or later is required to use this method**
 
 Finishes the process of enabling TOTP two-factor authentication for your account. You can use [`steam-totp`](https://www.npmjs.com/package/steam-totp) in the future when logging on to get a code.
@@ -360,14 +438,20 @@ Finishes the process of enabling TOTP two-factor authentication for your account
 	- `enabledTime` - A `Date` object representing when Steam Guard was enabled for your account, or `null` if not available
 	- `machineTime` - A `Date` object representing when your current machine was authorized with Steam Guard, or `null` if not available
 	- `canTrade` - `true` if Steam Guard will allow you to trade, `false` if not. You may still be blocked by a trade ban or another trading limitation.
+	- `twoFactorTime` - A `Date` object representing when the Steam Guard Mobile Authenticator was enabled for your account, or `null` if not enabled
+	- `hasPhone` - `true` if your account has a linked phone, `false` if not
 
-**v1.11.0 or later is required to use this method. v1.12.0 or later is required to use `canTrade`.**
+**v1.11.0 or later is required to use this method.
+v1.12.0 or later is required to use `canTrade`.
+v3.3.3 or later is required to use `twofactorTime`.
+v3.5.0 or later is required to use `hasPhone`.**
 
 Requests details about your account's Steam Guard status. This could be used to see if your account passes the Steam Guard trading requirements.
 
-In order to trade, both of the following must be true:
+In order to trade, **all** of the following must be true:
+- `enabled` must be `true` (account-level restriction)
 - `enabledTime` must be at least 15 days ago (account-level restriction)
-- `machineTime` must be at least 7 days ago (sentryfile-level restriction)
+- ONE of `machineTime` OR `twoFactorTime` must be at least 7 days ago (sentryfile-level restriction)
 
 ### gamesPlayed(apps)
 `apps` - An array, object, string, or number (see below)
@@ -392,7 +476,7 @@ You can use multiple apps by providing an array of any mixture of the above form
 ### getPlayerCount(appid, callback)
 - `appid` - The AppID of the app for which you'd like the current player/user count (use `0` to get current logged-in Steam user count)
 - `callback` - Called when the requested data is available
-	- `result` - A value from `Steam.EResult`
+	- `result` - A value from `SteamUser.EResult`
 	- `players` - How many Steam users are currently playing/using the app
 
 Requests a count of how many Steam users are currently playing/using an app.
@@ -454,7 +538,7 @@ Requests a list of game servers from the master server.
 **Works when anonymous.** Gets current IP addresses for servers with given SteamIDs.
 
 ### getProductChanges(sinceChangenumber, callback)
-- `sinceChangenumber` - The changenumber of the last known changelist. You will get changes which have occurred since then and now. Use 1 to request all changes ever.
+- `sinceChangenumber` - The changenumber of the last known changelist. You will get changes which have occurred since then and now. You won't get any info except the current changenumber if you request more than around 5,000 changenumbers in the past.
 - `callback` - Called when data is available
 	- `currentChangenumber` - The changenumber of the newest changelist
 	- `apps` - An array of objects for apps which have changed. Each object has these properties:
@@ -492,13 +576,85 @@ Requests a list of game servers from the master server.
 
 Access tokens are global. That is, everyone who has access to an app receives the same token. Tokens do not seem to expire.
 
+### getOwnedApps()
+
+**v3.3.0 or later is required to use this method**
+
+Returns an array of AppIDs which your account owns. This cannot be safely called until `appOwnershipCached` is emitted.
+
+`enablePicsCache` must be `true` to use this method. Otherwise, an `Error` will be thrown.
+
+### ownsApp(appid)
+- `appid` - A numeric AppID
+
+**v3.3.0 or later is required to use this method**
+
+Returns `true` if your account owns the specified AppID, or `false` if not. This cannot be safely called until
+`appOwnershipCached` is emitted.
+
+`enablePicsCache` must be `true` to use this method. Otherwise, an `Error` will be thrown.
+
+### getOwnedDepots()
+
+**v3.3.0 or later is required to use this method**
+
+Returns an array of depot IDs which your account owns. This cannot be safely called until `appOwnershipCached` is emitted.
+
+`enablePicsCache` must be `true` to use this method. Otherwise, an `Error` will be thrown.
+
+### ownsDepot(depotid)
+- `depotid` - A numeric depot ID
+
+**v3.3.0 or later is required to use this method**
+
+Returns `true` if your account owns the specified depot, or `false` if not. This cannot be safely called until
+`appOwnershipCached` is emitted.
+
+`enablePicsCache` must be `true` to use this method. Otherwise, an `Error` will be thrown.
+
+### getOwnedPackages()
+
+**v3.3.0 or later is required to use this method**
+
+Returns an array of package IDs which your account owns. If you logged in anonymously, this can be safely called
+immediately following logon. Otherwise, this cannot be safely called until `licenses` is emitted.
+
+### ownsPackage(packageid)
+- `packageid` - A numeric package ID
+
+**v3.3.0 or later is required to use this method**
+
+Returns `true` if your account owns the specified package ID, or `false` if not. If you logged in anonymously, this can
+be safely called immediately following logon. Otherwise, this cannot be safely called until `licenses` is emitted.
+
+### getPublishedFileDetails(ids, callback)
+- `ids` - Either an integer, or an array of integers containing the IDs of the published file(s) you want details for
+- `callback` - A function to be called when the request has completed
+    - `err` - An `Error` object on failure, or `null` on success
+    - `results` - An object whose keys are published file IDs, and values are object containing a ton of information
+
+**v3.8.0 or later is required to use this method**
+
+Gets details for one or more published files. Published files are anything with a URL like
+`https://steamcommunity.com/sharedfiles/filedetails/?id=662626851` (where `id` is the published file ID).
+
+The amount of data available in `results` is huge, so I can only suggest that you `console.log` it to see what's
+available.
+
 ### setPersona(state[, name])
-- `state` - A value from `EPersonaState`
+- `state` - A value from [`EPersonaState`](https://github.com/DoctorMcKay/node-steam-user/blob/master/enums/EPersonaState.js)
 - `name` - Optional. Your new profile name
 
 **v1.9.0 or later is required to use this method**
 
 Changes our online status, and optionally your profile name. You need to call this after you logon or else you'll show up as offline.
+
+### setUIMode(mode)
+- `mode` - A value from [`EClientUIMode`](https://github.com/DoctorMcKay/node-steam-user/blob/master/resources/EClientUIMode.js)
+
+**v3.7.0 or later is required to use this method**
+
+Sets your current UI mode, which displays as an icon next to your online status in Steam chat and the friends list.
 
 ### addFriend(steamID)
 - `steamID` - The SteamID of the user you want to add as a friend, as a `SteamID` object or a string that can parse into one
@@ -549,6 +705,37 @@ Requests persona data for one or more users from Steam. The response will arrive
 **v1.9.0 or later is required to use this method**
 
 Gets the Steam Level for one or more Steam users (who do not have to be on your friends list).
+
+### getGameBadgeLevel(appid, callback)
+- `appid` - The AppID of the game you want to get your badge level for
+- `callback` - Called when the requested data is available.
+    - `err` - An `Error` object on failure, or `null` on success
+    - `steamLevel` - Your own Steam level
+    - `badgeLevel` - The level on your badge for this game (0 if you don't have one)
+    - `foilBadgeLevel` - The level on your foil badge for this game (0 if you don't have one)
+
+**v3.8.0 or later is required to use this method**
+
+Gets your own Steam Level, and the level you have on a badge for a particular game.
+
+### inviteToGroup(userSteamID, groupSteamID)
+- `userSteamID` - The SteamID of the user you want to invite, as a `SteamID` object or a string which can parse into one
+- `groupSteamID` - The SteamID of the group you want to invite the user to, as a `SteamID` object or a string which can parse into one
+
+**v3.7.0 or later is required to use this method**
+
+Invites a user to a Steam group.
+
+**Warning:** Only send group invites in response to a user's request; sending automated group invites is a violation of
+the Steam Subscriber Agreement and can get you banned.
+
+### respondToGroupInvite(groupSteamID, accept)
+- `groupSteamID` - The SteamID of the group you were invited to, as a `SteamID` object or a string which can parse into one
+- `accept` - `true` to join the group, `false` to ignore the invitation
+
+**v3.7.0 or later is required to use this method**
+
+Joins a group you were invited to or ignores the invite.
 
 ### trade(steamID)
 - `steamID` - Either a `SteamID` object or a string which can parse into one
@@ -681,7 +868,16 @@ Invites a user to a chat room.
 
 Creates a new multi-user chat room.
 
-# Events
+### redeemKey(key[, callback])
+- `key` - Steam formatted game key
+- `callback` - Optional. Called when request completes
+	- `result` - An `EResult` value
+	- `details` - A `SteamUser.EPurchaseResult` value
+	- `packages` - An object whose keys are packageIDs and values are package names
+
+Redeems game code on your account
+
+# Events [^](#contents)
 
 ## ID Events
 
@@ -693,16 +889,19 @@ For example:
 // This will fire when we receive a chat message from ANY friend
 user.on('friendMessage', function(steamID, message) {
 	console.log("Friend message from " + steamID.getSteam3RenderedID() + ": " + message);
-}
+});
 
 // This will fire when we receive a chat message from [U:1:46143802] / 76561198006409530 ONLY
 user.on('friendMessage#76561198006409530', function(steamID, message) {
 	console.log("Friend message from " + steamID.getSteam3RenderedID() + ": " + message);
-}
+});
 ```
 
 ### loggedOn
 - `details` - An object containing various details about your account (see [`CMsgClientLogonResponse`](https://github.com/SteamRE/SteamKit/blob/SteamKit_1.6.3/Resources/Protobufs/steamclient/steammessages_clientserver.proto#L93-L116))
+- `parental` - An object containing your parental controls settings
+
+**v3.5.0 or later is required to use `parental`.**
 
 Emitted when you're successfully logged into Steam.
 
@@ -710,6 +909,7 @@ Emitted when you're successfully logged into Steam.
 - `domain` - If an email code is needed, the domain name of the address where the email was sent. `null` if an app code is needed.
 - `callback` - Should be called when the code is available.
 	- `code` - The Steam Guard auth code
+- `lastCodeWrong` - `true` if you're using 2FA and the last code you provided was wrong, `false` otherwise
 
 If the `promptSteamGuardCode` option is disabled, this event will be emitted when Steam requests a Steam Guard code from us. You should collect the code from the user somehow and then call the `callback` with the code as the sole argument.
 
@@ -724,7 +924,7 @@ user.on('steamGuard', function(domain, callback) {
 ```
 
 ### error
-- `e` - An `Error` object
+- `err` - An `Error` object
 
 Emitted when an error occurs during logon. Also emitted if we're disconnected and `autoRelogin` is either disabled, or it's a fatal disconnect.
 
@@ -733,11 +933,19 @@ If this event isn't handled, the program will crash.
 The `SteamUser` object's `steamID` property will still be defined when this is emitted. The `Error` object will have an `eresult` parameter which is a value from the [`EResult`](https://github.com/SteamRE/SteamKit/blob/SteamKit_1.6.3/Resources/SteamLanguage/eresult.steamd) enum.
 
 ### disconnected
-- `eresult` - A value from the `Steam.EResult` enum
+- `eresult` - A value from the `SteamUser.EResult` enum
+- `msg` - A string describing the reason for the disconnect, if available (might be undefined)
 
-Emitted when we're disconnected from Steam for a non-fatal reason and `autoRelogin` is enabled. `SteamUser` will continually retry connection and will either emit `loggedOn` when logged back on, or `error` if a fatal logon error is experienced.
+Emitted when we're disconnected from Steam for a non-fatal reason and `autoRelogin` is enabled. `SteamUser` will
+continually retry connection and will either emit `loggedOn` when logged back on, or `error` if a fatal logon error is
+experienced.
+
+Also emitted in response to a logOff() call.
 
 The `SteamUser` object's `steamID` property will still be defined when this is emitted.
+
+The `eresult` value might be 0 (Invalid), which indicates that the disconnection was due to the connection being closed
+directly, without Steam sending a LoggedOff message.
 
 ### sentry
 - `sentry` - A Buffer containing your new sentry file
@@ -782,6 +990,26 @@ Emitted when Steam sends a notification of new trade offers.
 
 Emitted when Steam sends a notification of unread offline chat messages. This will always be emitted after logon, even if you have no messages.
 
+### vanityURL
+- `url` - Your new vanity URL
+
+**v3.7.0 or later is required to use this event**
+
+Emitted when your vanity URL changes. `url` is your new vanity URL. This event is emitted before the [`vanityURL`](#vanityurl)
+property is updated, so you can compare to see what changed.
+
+### accountInfo
+- `name` - Your account's Steam (persona) name
+- `country` - The character code from which you're logging in (via GeoIP), e.g. "US"
+- `authedMachines` - How many machines are authorized to login to your account with Steam Guard
+- `flags` - Your account's bitwise [flags](https://github.com/SteamRE/SteamKit/blob/b80cdf5249891d54c655e39262d8267c7b40b249/Resources/SteamLanguage/enums.steamd#L81-L113)
+- `facebookID` - If your account is linked with Facebook, this is your Facebook account ID
+- `facebookName` - If your account is linked with Facebook, this is your (real) name on Facebook
+
+**v3.4.0 or later is required to use this event**
+
+Emitted on logon and when account info changes. This event is emitted before the [`accountInfo`](#accountinfo) property is updated, so you can compare to see what changed.
+
 ### emailInfo
 - `address` - Your account's email address
 - `validated` - A boolean value for whether or not your email address is validated
@@ -794,7 +1022,7 @@ Emitted on logon and when email info changes. The [`emailInfo`](#emailinfo) prop
 - `locked` - `true` if your account is [locked](https://support.steampowered.com/kb_article.php?ref=6416-FHVM-3982), `false` if not (accounts can also be locked by Support)
 - `canInviteFriends` - `true` if your account can invite friends, `false` if not
 
-Emitted on logon and probably when limitations change. The [`limitations`](#limitations) property will be updated after this event is emitted.
+Emitted on logon and when limitations change. The [`limitations`](#limitations) property will be updated after this event is emitted.
 
 ### vacBans
 - `numBans` - How many bans your account has
@@ -812,11 +1040,70 @@ Emitted on logon and when wallet balance changes. The [`wallet`](#wallet) proper
 ### licenses
 - `licenses` - An array of licenses
 
-Contains the license data for the packages which your Steam account owns. To see license object structure, see [`CMsgClientLicenseList.License`](https://github.com/SteamRE/SteamKit/blob/SteamKit_1.6.3/Resources/Protobufs/steamclient/steammessages_clientserver.proto#L307-L320).
+Contains the license data for the packages which your Steam account owns. To see license object structure, see
+[`CMsgClientLicenseList.License`](https://github.com/SteamRE/SteamKit/blob/SteamKit_1.6.3/Resources/Protobufs/steamclient/steammessages_clientserver.proto#L307-L320).
 
-Emitted on logon and when licenses change. The [`licenses`](#licenses) property will be updated after this event is emitted.
+Emitted on logon and when licenses change. The [`licenses`](#licenses) property will be updated after this event is
+emitted.
 
-This isn't emitted for anonymous accounts. However, all anonymous user accounts have a license for package 17906 automatically.
+This isn't emitted for anonymous accounts. However, all anonymous user accounts have a license for package 17906
+automatically.
+
+### appOwnershipCached
+
+**v3.3.0 or later is required to use this event**
+
+Emitted once we have all data required in order to determine app ownership. You can now safely call `getOwnedApps`,
+`ownsApp`, `getOwnedDepots`, and `ownsDepot`.
+
+This is only emitted if `enablePicsCache` is `true`.
+
+### changelist
+- `changenumber` - The changenumber of the changelist we just received
+- `apps` - An array of AppIDs which changed since our last received changelist
+- `packages` - An array of PackageIDs which changed since our last received changelist
+
+**v3.3.0 or later is required to use this event**
+
+Emitted when we receive a new changelist from Steam. The `picsCache` property is updated after this is emitted, so you
+can get the previous changenumber via `picsCache.changenumber`.
+
+This is only emitted if `enablePicsCache` is `true` and `changelistUpdateInterval` is nonzero.
+
+### appUpdate
+- `appid` - The AppID of the app which just changed
+- `data` - An object identical to that received from `getProductInfo`
+
+**v3.3.0 or later is required to use this event**
+
+Emitted when an app that was already in our cache updates. The `picsCache` property is updated after this is emitted, so
+you can get the previous app data via `picsCache.apps[appid]`.
+
+This is only emitted if `enablePicsCache` is `true` and `changelistUpdateInterval` is nonzero.
+
+### packageUpdate
+- `packageid` - The PackageID of the package which just changed
+- `data` - An object identical to that received from `getProductInfo`
+
+**v3.3.0 or later is required to use this event**
+
+Emitted when a package that was already in our cache updates. The `picsCache` property is updated after this is emitted,
+so you can get the previous package data via `picsCache.packages[packageid]`.
+
+This is only emitted if `enablePicsCache` is `true` and `changelistUpdateInterval` is nonzero.
+
+### marketingMessages
+- `timestamp` - A `Date` object containing the time when this batch of messages was published
+- `messages` - An array of objects containing the following properties
+    - `id` - The marketing message's 64-bit numeric ID, as a string
+    - `url` - The URL where you can view this message
+    - `flags` - A 32-bit integer containing the message's bitwise [flags](https://github.com/SteamRE/SteamKit/blob/b80cdf5249891d54c655e39262d8267c7b40b249/Resources/SteamLanguage/enums.steamd#L827-L836)
+
+**v3.4.0 or later is required to use this event**
+
+Emitted on logon, and when new marketing messages are published. Marketing messages are the popups that appear after
+you exit a game if you have "Notify me about additions or changes to my games, new releases, and upcoming releases"
+enabled in the Steam client.
 
 ### tradeRequest
 - `steamID` - The SteamID of the user who sent the request, as a `SteamID` object
@@ -831,9 +1118,9 @@ Emitted when someone sends us a trade request. Example usage:
 
 ```js
 user.on('tradeRequest', function(steamID, respond) {
-	console.log("Incoming trade request from " + name + " " + steamID.getSteam3RenderedID() + ", accepting");
+	console.log("Incoming trade request from " + steamID.getSteam3RenderedID() + ", accepting");
 	respond(true);
-}
+});
 ```
 
 ### tradeResponse
@@ -922,7 +1209,7 @@ The [`myFriends`](#myfriends) property isn't yet updated when this is emitted, s
 
 ### groupRelationship
 - `sid` - A `SteamID` object for the group whose relationship with us just changed
-- `relationship` - A value from `EFriendRelationship`
+- `relationship` - A value from `EClanRelationship`
 
 **v1.9.0 or later is required to use this event**
 

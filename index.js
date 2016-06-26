@@ -1,17 +1,18 @@
-var Steam = require('steam');
-var SteamID = require('steamid');
+var Steam = require('steam-client');
 var AppDirectory = require('appdirectory');
 var FileStorage = require('file-manager');
-var fs = require('fs');
 
 require('util').inherits(SteamUser, require('events').EventEmitter);
 
 module.exports = SteamUser;
 
 SteamUser.Steam = Steam;
-SteamUser.ECurrencyCode = require('./resources/ECurrencyCode.js');
 SteamUser.CurrencyData = require('./resources/CurrencyData.js');
 SteamUser.EMachineIDType = require('./resources/EMachineIDType.js');
+SteamUser.EPurchaseResult = require('./resources/EPurchaseResult.js');
+SteamUser.EClientUIMode = require('./resources/EClientUIMode.js');
+
+require('./resources/enums.js');
 
 try {
 	SteamUser.Steam.servers = require('./resources/servers.json');
@@ -20,7 +21,12 @@ try {
 }
 
 function SteamUser(client, options) {
-	this.client = client ? client : new Steam.SteamClient();
+	if(client && client.constructor.name !== 'SteamClient' && client.constructor.name !== 'CMClient') {
+		options = client;
+		client = null;
+	}
+
+	this.client = client ? client : new Steam.CMClient();
 	this.steamID = null;
 
 	// Account info
@@ -38,22 +44,35 @@ function SteamUser(client, options) {
 	this.myGroups = {};
 	this.myFriendGroups = {};
 
-	this._sentry = null;
+	this._gcTokens = []; // game connect tokens
+	this._connectTime = 0;
+	this._connectionCount = 0;
+	this._authSeqMe = 0;
+	this._authSeqThem = 0;
+	this._hSteamPipe = Math.floor(Math.random() * 1000000) + 1;
 
-	var appdir = new AppDirectory({
-		"appName": "node-steamuser",
-		"appAuthor": "doctormckay"
-	});
+	// App and package cache
+	this._changelistUpdateTimer = null;
+	this.picsCache = {
+		"changenumber": 0,
+		"apps": {},
+		"packages": {}
+	};
+
+	this._sentry = null;
 
 	this.options = options || {};
 
 	var defaultOptions = {
-		"dataDirectory": process.env.OPENSHIFT_DATA_DIR ? process.env.OPENSHIFT_DATA_DIR + "/node-steamuser" : appdir.userData(),
 		"autoRelogin": true,
 		"singleSentryfile": false,
 		"promptSteamGuardCode": true,
 		"machineIdType": SteamUser.EMachineIDType.AccountNameGenerated,
 		"machineIdFormat": ["SteamUser Hash BB3 {account_name}", "SteamUser Hash FF2 {account_name}", "SteamUser Hash 3B3 {account_name}"],
+		"enablePicsCache": false,
+		"picsCacheAll": false,
+		"changelistUpdateInterval": 60000,
+		"saveAppTickets": true,
 		"debug": false
 	};
 
@@ -67,6 +86,14 @@ function SteamUser(client, options) {
 		}
 	}
 
+	if (!this.options.dataDirectory) {
+		if (process.env.OPENSHIFT_DATA_DIR) {
+			this.options.dataDirectory = process.env.OPENSHIFT_DATA_DIR + "/node-steamuser";
+		} else {
+			this.options.dataDirectory = (new AppDirectory({"appName": "node-steamuser", "appAuthor": "doctormckay"})).userData();
+		}
+	}
+
 	this.storage = new FileStorage(this.options.dataDirectory);
 
 	this.client.on('message', this._handleMessage.bind(this));
@@ -77,15 +104,7 @@ function SteamUser(client, options) {
 			return; // We've already handled this
 		}
 
-		if(self.options.autoRelogin) {
-			self.emit('disconnected', Steam.EResult.RemoteDisconnect);
-			self.steamID = null;
-			self.logOn(true);
-		} else {
-			e.eresult = Steam.EResult.RemoteDisconnect;
-			self.emit('error', e);
-			self.steamID = null;
-		}
+		self._handleLogOff(e.eresult || SteamUser.EResult.NoConnection, e.message || "NoConnection");
 	});
 
 	this.client.on('servers', function(servers) {
@@ -104,6 +123,15 @@ SteamUser.prototype.setOption = function(option, value) {
 	switch(option) {
 		case 'dataDirectory':
 			this.storage.directory = value;
+			break;
+
+		case 'enablePicsCache':
+			this._resetChangelistUpdateTimer();
+			this._getLicenseInfo();
+			break;
+
+		case 'changelistUpdateInterval':
+			this._resetChangelistUpdateTimer();
 			break;
 	}
 };
@@ -124,6 +152,7 @@ require('./components/sentry.js');
 require('./components/web.js');
 require('./components/notifications.js');
 require('./components/apps.js');
+//require('./components/appauth.js');
 require('./components/account.js');
 require('./components/gameservers.js');
 require('./components/utility.js');
@@ -131,6 +160,7 @@ require('./components/trading.js');
 require('./components/friends.js');
 require('./components/chat.js');
 require('./components/twofactor.js');
+require('./components/pubfiles.js');
 
 /**
  * Called when the request completes.

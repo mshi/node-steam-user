@@ -1,10 +1,29 @@
-var Steam = require('steam');
 var SteamUser = require('../index.js');
+var SteamID = require('steamid');
 var Crypto = require('crypto');
-var SteamCrypto = require('steam-crypto');
+var SteamCrypto = require('@doctormckay/steam-crypto');
 
 SteamUser.prototype.webLogOn = function() {
-	this._send(Steam.EMsg.ClientRequestWebAPIAuthenticateUserNonce, {});
+	// Verify logged on
+	if (!this.steamID) {
+		throw new Error("Cannot log onto steamcommunity.com without first being connected to Steam network");
+	}
+
+	// Verify not anonymous user
+	if (this.steamID.type != SteamID.Type.INDIVIDUAL) {
+		throw new Error('Must not be anonymous user to use webLogOn (check to see you passed in valid credentials to logOn)')
+	}
+
+	this._send(SteamUser.EMsg.ClientRequestWebAPIAuthenticateUserNonce, {});
+};
+
+SteamUser.prototype._webLogOn = function() {
+	// Identical to webLogOn, except silently fails if not logged on
+	if (!this.steamID || this.steamID.type != SteamID.Type.INDIVIDUAL) {
+		return;
+	}
+
+	this.webLogOn();
 };
 
 SteamUser.prototype._webAuthenticate = function(nonce) {
@@ -34,11 +53,15 @@ SteamUser.prototype._webAuthenticate = function(nonce) {
 		}
 	};
 
+	if (this.client.localAddress || this.client._localAddress) {
+		options.localAddress = this.client.localAddress || this.client._localAddress;
+	}
+
 	var self = this;
 	var req = require('https').request(options, function(res) {
 		if(res.statusCode != 200) {
 			self.emit('debug', 'Error in AuthenticateUser: ' + res.statusCode);
-			setTimeout(self.webLogOn.bind(self), 500);
+			setTimeout(self._webLogOn.bind(self), 500);
 			return;
 		}
 
@@ -57,7 +80,7 @@ SteamUser.prototype._webAuthenticate = function(nonce) {
 
 	req.on('error', function(err) {
 		self.emit('debug', 'Error in AuthenticateUser: ' + err.message);
-		setTimeout(self.webLogOn.bind(self), 500);
+		setTimeout(self._webLogOn.bind(self), 500);
 	});
 
 	req.end(data);
@@ -65,10 +88,10 @@ SteamUser.prototype._webAuthenticate = function(nonce) {
 
 // Handlers
 
-SteamUser.prototype._handlers[Steam.EMsg.ClientRequestWebAPIAuthenticateUserNonceResponse] = function(body) {
-	if(body.eresult != Steam.EResult.OK) {
+SteamUser.prototype._handlers[SteamUser.EMsg.ClientRequestWebAPIAuthenticateUserNonceResponse] = function(body) {
+	if(body.eresult != SteamUser.EResult.OK) {
 		this.emit('debug', 'Got response ' + body.eresult + ' from ClientRequestWebAPIAuthenticateUserNonceResponse, retrying');
-		setTimeout(this.webLogOn.bind(this), 500);
+		setTimeout(this._webLogOn.bind(this), 500);
 	} else {
 		this._webAuthenticate(body.webapi_authenticate_user_nonce);
 	}

@@ -1,13 +1,14 @@
-var Steam = require('steam');
+var Steam = require('steam-client');
 var SteamUser = require('../index.js');
 var SteamID = require('steamid');
 var Helpers = require('./helpers.js');
+var Schema = require('./protobufs.js');
 var Crypto = require('crypto');
 var ByteBuffer = require('bytebuffer');
 
 SteamUser.prototype.logOn = function(details) {
-	if(this.client.connected || this.client.loggedOn) {
-		throw new Error("Already connected or logged on, cannot log on again");
+	if(this.client.loggedOn) {
+		throw new Error("Already logged on, cannot log on again");
 	}
 
 	this.steamID = null;
@@ -15,6 +16,8 @@ SteamUser.prototype.logOn = function(details) {
 	this.wallet = null;
 	this.emailInfo = null;
 	this.licenses = null;
+
+	this._loggingOff = false;
 
 	this.users = {};
 	this.groups = {};
@@ -34,7 +37,8 @@ SteamUser.prototype.logOn = function(details) {
 			"two_factor_code": details.twoFactorCode,
 			"should_remember_password": !!details.rememberPassword,
 			"obfustucated_private_ip": details.logonID || 0,
-			"protocol_version": 65575
+			"protocol_version": 65575,
+			"supports_rate_limit_response": true
 		};
 	}
 
@@ -125,29 +129,48 @@ SteamUser.prototype.logOn = function(details) {
 		sid.accountid = 0;
 		self.client.steamID = sid.getSteamID64();
 
-		self.client.connect();
+		if(self.client.connected) {
+			onConnected.call(self);
+		} else {
+			self.client.connect();
 
-		self._onConnected = onConnected.bind(self);
-		self.client.once('connected', self._onConnected);
+			self._onConnected = onConnected.bind(self);
+			self.client.once('connected', self._onConnected);
+		}
 	});
 };
 
 function onConnected() {
-	this._send(Steam.EMsg.ClientLogon, this._logOnDetails);
+	if(this.client.constructor.name === 'CMClient') {
+		// We need to use this since CMClient defines the protocol version itself
+		this.client.logOn(this._logOnDetails);
+	} else {
+		this._send(SteamUser.EMsg.ClientLogon, this._logOnDetails);
+	}
 }
 
 SteamUser.prototype.logOff = SteamUser.prototype.disconnect = function(suppressLogoff) {
-	if(!this.client.connected) {
-		throw new Error("Cannot disconnect from Steam as we're currently not connected.");
-	}
-
-	if(!suppressLogoff) {
-		this._send(Steam.EMsg.ClientLogOff, {});
-	}
-
-	this.steamID = null;
 	this.client.removeListener('connected', this._onConnected);
-	this.client.disconnect();
+
+	this._clearChangelistUpdateTimer();
+
+	if(this.client.connected && !suppressLogoff) {
+		this._loggingOff = true;
+		this._send(SteamUser.EMsg.ClientLogOff, {});
+
+		var self = this;
+		var timeout = setTimeout(function() {
+			self.emit('disconnected', 0, "Logged off");
+			self._loggingOff = false;
+			self.client.disconnect();
+		}, 4000);
+
+		this.once('disconnected', function(eresult) {
+			clearTimeout(timeout);
+		});
+	} else {
+		this.client.disconnect();
+	}
 };
 
 SteamUser.prototype._getMachineID = function(localFile) {
@@ -186,10 +209,10 @@ SteamUser.prototype._getMachineID = function(localFile) {
 
 // Handlers
 
-SteamUser.prototype._handlers[Steam.EMsg.ClientLogOnResponse] = function(body) {
+SteamUser.prototype._handlers[SteamUser.EMsg.ClientLogOnResponse] = function(body) {
 	var self = this;
 	switch(body.eresult) {
-		case Steam.EResult.OK:
+		case SteamUser.EResult.OK:
 			this.steamID = new SteamID(body.client_supplied_steamid.toString());
 
 			this._logOnDetails.last_session_id = this.client._sessionID;
@@ -199,10 +222,30 @@ SteamUser.prototype._handlers[Steam.EMsg.ClientLogOnResponse] = function(body) {
 
 			this.publicIP = Helpers.ipIntToString(body.public_ip);
 			this.cellID = body.cell_id;
+			this.vanityURL = body.vanity_url;
+
+			this._connectTime = Date.now();
+			this._connectionCount = 0;
+			this._gcTokens = [];
 
 			this.storage.saveFile('cellid-' + Helpers.getInternalMachineID() + '.txt', body.cell_id);
 
-			this.emit('loggedOn', body);
+			var parental = body.parental_settings ? Schema.ParentalSettings.decode(body.parental_settings) : null;
+			if (parental && parental.salt && parental.passwordhash) {
+				parental.salt = parental.salt.toBuffer();
+				parental.passwordhash = parental.passwordhash.toBuffer();
+
+				var sid = new SteamID();
+				sid.universe = this.steamID.universe;
+				sid.type = SteamID.Type.INDIVIDUAL;
+				sid.instance = SteamID.Instance.DESKTOP;
+				sid.accountid = parental.steamid.low;
+				parental.steamid = sid;
+			}
+
+			this.emit('loggedOn', body, parental);
+
+			this._getChangelistUpdate();
 
 			if(this.steamID.type == SteamID.Type.INDIVIDUAL) {
 				this._requestNotifications();
@@ -210,26 +253,30 @@ SteamUser.prototype._handlers[Steam.EMsg.ClientLogOnResponse] = function(body) {
 				if(body.webapi_authenticate_user_nonce) {
 					this._webAuthenticate(body.webapi_authenticate_user_nonce);
 				}
+			} else if(this.steamID.type == SteamID.Type.ANON_USER) {
+				this._getLicenseInfo();
 			}
 
 			break;
 
-		case Steam.EResult.AccountLogonDenied:
-		case Steam.EResult.AccountLoginDeniedNeedTwoFactor:
-		case Steam.EResult.TwoFactorCodeMismatch:
+		case SteamUser.EResult.AccountLogonDenied:
+		case SteamUser.EResult.AccountLoginDeniedNeedTwoFactor:
+		case SteamUser.EResult.TwoFactorCodeMismatch:
 			this.disconnect(true);
 
-			var isEmailCode = body.eresult == Steam.EResult.AccountLogonDenied;
-			this._steamGuardPrompt(isEmailCode ? body.email_domain : null, function(code) {
+			var isEmailCode = body.eresult == SteamUser.EResult.AccountLogonDenied;
+			var lastCodeWrong = body.eresult == SteamUser.EResult.TwoFactorCodeMismatch;
+
+			this._steamGuardPrompt(isEmailCode ? body.email_domain : null, lastCodeWrong, function(code) {
 				self._logOnDetails[isEmailCode ? 'auth_code' : 'two_factor_code'] = code;
 				self.logOn(true);
 			});
 
 			break;
 
-		case Steam.EResult.ServiceUnavailable:
-		case Steam.EResult.TryAnotherCM:
-			this.emit('debug', 'Log on response: ' + (body.eresult == Steam.EResult.ServiceUnavailable ? "ServiceUnavailable" : "TryAnotherCM"));
+		case SteamUser.EResult.ServiceUnavailable:
+		case SteamUser.EResult.TryAnotherCM:
+			this.emit('debug', 'Log on response: ' + (body.eresult == SteamUser.EResult.ServiceUnavailable ? "ServiceUnavailable" : "TryAnotherCM"));
 			this.disconnect(true);
 
 			setTimeout(function() {
@@ -241,8 +288,8 @@ SteamUser.prototype._handlers[Steam.EMsg.ClientLogOnResponse] = function(body) {
 		default:
 			var result = body.eresult;
 
-			for(var i in Steam.EResult) {
-				if(Steam.EResult.hasOwnProperty(i) && Steam.EResult[i] == body.eresult) {
+			for(var i in SteamUser.EResult) {
+				if(SteamUser.EResult.hasOwnProperty(i) && SteamUser.EResult[i] == body.eresult) {
 					result = i;
 					break;
 				}
@@ -255,10 +302,10 @@ SteamUser.prototype._handlers[Steam.EMsg.ClientLogOnResponse] = function(body) {
 	}
 };
 
-SteamUser.prototype._handlers[Steam.EMsg.ClientLoggedOff] = function(body) {
+SteamUser.prototype._handlers[SteamUser.EMsg.ClientLoggedOff] = function(body) {
 	var msg = body.eresult;
-	for(var i in Steam.EResult) {
-		if(Steam.EResult.hasOwnProperty(i) && Steam.EResult[i] == body.eresult) {
+	for(var i in SteamUser.EResult) {
+		if(SteamUser.EResult.hasOwnProperty(i) && SteamUser.EResult[i] == body.eresult) {
 			msg = i;
 			break;
 		}
@@ -268,23 +315,23 @@ SteamUser.prototype._handlers[Steam.EMsg.ClientLoggedOff] = function(body) {
 	this._handleLogOff(body.eresult, msg);
 };
 
-// TODO: Investigate this. It doesn't always appear to mean that we're logged off.
-/*SteamUser.prototype._handlers[Steam.EMsg.ClientServerUnavailable] = function(body) {
-	this.emit('debug', 'Server unavailable');
-	this._handleLogOff(Steam.EResult.ServiceUnavailable, 'ServiceUnavailable');
-};*/
-
 SteamUser.prototype._handleLogOff = function(result, msg) {
 	var fatal = true;
 
-	if(this.options.autoRelogin && [Steam.EResult.Fail, Steam.EResult.ServiceUnavailable, Steam.EResult.TryAnotherCM].indexOf(result) != -1) {
+	if(this.options.autoRelogin && [0, SteamUser.EResult.Fail, SteamUser.EResult.NoConnection, SteamUser.EResult.ServiceUnavailable, SteamUser.EResult.TryAnotherCM].indexOf(result) != -1) {
 		fatal = false;
 	}
 
 	delete this.publicIP;
 	delete this.cellID;
 
-	if(fatal) {
+	this._gcTokens = [];
+	this._connectionCount = 0;
+	this._connectTime = 0;
+
+	this._clearChangelistUpdateTimer();
+
+	if(fatal && !this._loggingOff) {
 		var e = new Error(msg);
 		e.eresult = result;
 
@@ -297,19 +344,23 @@ SteamUser.prototype._handleLogOff = function(result, msg) {
 	} else {
 		// Only emit "disconnected" if we were previously logged on
 		if(this.steamID) {
-			this.emit('disconnected', result);
+			this.emit('disconnected', result, msg);
 		}
 
 		this.disconnect(true);
 
-		var self = this;
-		setTimeout(function() {
-			self.logOn(true);
-		}, 1000);
+		if(!this._loggingOff) {
+			var self = this;
+			setTimeout(function() {
+				self.logOn(true);
+			}, 1000);
+		}
+
+		this._loggingOff = false;
 	}
 };
 
-SteamUser.prototype._handlers[Steam.EMsg.ClientNewLoginKey] = function(body) {
+SteamUser.prototype._handlers[SteamUser.EMsg.ClientNewLoginKey] = function(body) {
 	if(this.steamID.type == SteamID.Type.INDIVIDUAL) {
 		delete this._logOnDetails.password;
 		this._logOnDetails.login_key = body.login_key;
@@ -317,10 +368,13 @@ SteamUser.prototype._handlers[Steam.EMsg.ClientNewLoginKey] = function(body) {
 		if(this._logOnDetails.should_remember_password) {
 			this.emit('loginKey', body.login_key);
 		}
+
+		// Accept the key
+		this._send(SteamUser.EMsg.ClientNewLoginKeyAccepted, {"unique_id": body.unique_id});
 	}
 };
 
-SteamUser.prototype._steamGuardPrompt = function(domain, callback) {
+SteamUser.prototype._steamGuardPrompt = function(domain, lastCodeWrong, callback) {
 	if(this.options.promptSteamGuardCode) {
 		var rl = require('readline').createInterface({
 			"input": process.stdin,
@@ -332,7 +386,7 @@ SteamUser.prototype._steamGuardPrompt = function(domain, callback) {
 			callback(code);
 		});
 	} else {
-		this.emit('steamGuard', domain, callback);
+		this.emit('steamGuard', domain, callback, lastCodeWrong);
 	}
 };
 
