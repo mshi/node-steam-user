@@ -285,6 +285,10 @@ SteamUser.prototype._handlers[SteamUser.EMsg.ClientFriendMsgIncoming] = function
 		case SteamUser.EChatEntryType.Typing:
 			this._emitIdEvent('friendTyping', senderID);
 			break;
+
+		case SteamUser.EChatEntryType.LeftConversation:
+			this._emitIdEvent('friendLeftConversation', senderID);
+			break;
 	}
 };
 
@@ -387,10 +391,14 @@ SteamUser.prototype._handlers[SteamUser.EMsg.ClientChatInvite] = function(body) 
 	var inviterID = new SteamID(body.steam_id_patron.toString());
 	var chatID = fromChatID(body.steam_id_chat);
 
-	this.emit('chatInvite', inviterID, chatID, body.chat_name);
-	this.emit('chatInvite#' + inviterID.getSteamID64(), inviterID, chatID, body.chat_name);
-	this.emit('chatInvite#' + chatID.getSteamID64(), inviterID, chatID, body.chat_name);
-	this.emit('chatInvite#' + inviterID.getSteamID64() + '#' + chatID.getSteamID64(), inviterID, chatID, body.chat_name);
+	if (chatID.isLobby()) {
+		this._emitIdEvent('lobbyInvite', inviterID, chatID);
+	} else {
+		this.emit('chatInvite', inviterID, chatID, body.chat_name);
+		this.emit('chatInvite#' + inviterID.getSteamID64(), inviterID, chatID, body.chat_name);
+		this.emit('chatInvite#' + chatID.getSteamID64(), inviterID, chatID, body.chat_name);
+		this.emit('chatInvite#' + inviterID.getSteamID64() + '#' + chatID.getSteamID64(), inviterID, chatID, body.chat_name);
+	}
 };
 
 SteamUser.prototype._handlers[SteamUser.EMsg.ClientCreateChatResponse] = function(body) {
@@ -592,7 +600,7 @@ function toChatID(steamID) {
 function fromChatID(steamID) {
 	steamID = Helpers.steamID(steamID);
 
-	if(steamID.type == SteamID.Type.CHAT && steamID.instance & SteamID.ChatInstanceFlags.Clan) {
+	if(steamID.isGroupChat()) {
 		steamID.type = SteamID.Type.CLAN;
 		steamID.instance &= ~SteamID.ChatInstanceFlags.Clan;
 	}

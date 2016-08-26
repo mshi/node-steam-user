@@ -26,13 +26,21 @@ SteamUser.prototype.setUIMode = function(mode) {
 /**
  * Send (or accept) a friend invitiation.
  * @param {(SteamID|string)} steamID - Either a SteamID object of the user to add, or a string which can parse into one.
+ * @param {function} [callback] - Optional. Called with `err` and `name` parameters on completion.
  */
-SteamUser.prototype.addFriend = function(steamID) {
-	if(typeof steamID === 'string') {
-		steamID = new SteamID(steamID);
-	}
+SteamUser.prototype.addFriend = function(steamID, callback) {
+	this._send(SteamUser.EMsg.ClientAddFriend, {"steamid_to_add": Helpers.steamID(steamID).getSteamID64()}, function(body) {
+		if (!callback) {
+			return;
+		}
 
-	this._send(SteamUser.EMsg.ClientAddFriend, {"steamid_to_add": steamID.getSteamID64()});
+		if (body.eresult != SteamUser.EResult.OK) {
+			callback(Helpers.eresultError(body.eresult));
+			return;
+		}
+
+		callback(null, body.persona_name_added);
+	});
 };
 
 /**
@@ -223,6 +231,40 @@ SteamUser.prototype.respondToGroupInvite = function(groupSteamID, accept) {
 	buffer.writeUint8(accept ? 1 : 0);
 
 	this._send(SteamUser.EMsg.ClientAcknowledgeClanInvite, buffer.flip());
+};
+
+/**
+ * Get persona name history for one or more users.
+ * @param {{SteamID[]|string[]|SteamID|string}} userSteamIDs - SteamIDs of users to request aliases for
+ * @param {function} callback
+ */
+SteamUser.prototype.getAliases = function(userSteamIDs, callback) {
+	if (!(userSteamIDs instanceof Array)) {
+		userSteamIDs = [userSteamIDs];
+	}
+
+	userSteamIDs = userSteamIDs.map(Helpers.steamID).map(function(id) { return {"steamid": id.getSteamID64()}; });
+
+	this._send(SteamUser.EMsg.ClientAMGetPersonaNameHistory, {
+		"id_count": userSteamIDs.length,
+		"Ids": userSteamIDs
+	}, function(body) {
+		var ids = {};
+		body.responses = body.responses || [];
+		for (var i = 0; i < body.responses.length; i++) {
+			if (body.responses[i].eresult != SteamUser.EResult.OK) {
+				callback(Helpers.eresultError(body.responses[i].eresult));
+				return;
+			}
+
+			ids[body.responses[i].steamid.toString()] = (body.responses[i].names || []).map(function(name) {
+				name.name_since = new Date(name.name_since * 1000);
+				return name;
+			});
+		}
+
+		callback(null, ids);
+	});
 };
 
 // Handlers
@@ -437,19 +479,19 @@ SteamUser.prototype._handlers[SteamUser.EMsg.ClientPlayerNicknameList] = functio
 };
 
 function processUser(user) {
-	if(typeof user.gameid === 'object' && user.gameid !== null) {
+	if (typeof user.gameid === 'object' && user.gameid !== null) {
 		user.gameid = user.gameid.toNumber();
 	}
 
-	if(typeof user.last_logoff === 'number') {
+	if (typeof user.last_logoff === 'number') {
 		user.last_logoff = new Date(user.last_logoff * 1000);
 	}
 
-	if(typeof user.last_logon === 'number') {
+	if (typeof user.last_logon === 'number') {
 		user.last_logon = new Date(user.last_logon * 1000);
 	}
 
-	if (typeof user.avatar_hash === 'object' && Buffer.isBuffer(user.avatar_hash)) {
+	if (typeof user.avatar_hash === 'object' && (Buffer.isBuffer(user.avatar_hash) || ByteBuffer.isByteBuffer(user.avatar_hash))) {
 		var hash = user.avatar_hash.toString('hex');
 		user.avatar_url_icon = "https://steamcdn-a.akamaihd.net/steamcommunity/public/images/avatars/" + hash.substring(0, 2) + "/" + hash;
 		user.avatar_url_medium = user.avatar_url_icon + "_medium.jpg";

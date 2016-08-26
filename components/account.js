@@ -1,6 +1,8 @@
 var SteamUser = require('../index.js');
+var Helpers = require('./helpers.js');
 var SteamID = require('steamid');
 var ByteBuffer = require('bytebuffer');
+var BinaryKVParser = require('binarykvparser');
 
 SteamUser.prototype.createAccount = function(accountName, password, email, callback) {
 	if(typeof callback === 'string' && typeof arguments[5] === 'function') {
@@ -59,6 +61,90 @@ SteamUser.prototype.getSteamGuardDetails = function(callback) {
 			body.is_twofactor_enabled && body.timestamp_twofactor_enabled ? new Date(body.timestamp_twofactor_enabled * 1000) : null,
 			body.is_phone_verified || false
 		);
+	});
+};
+
+SteamUser.prototype.getCredentialChangeTimes = function(callback) {
+	this._sendUnified("Credentials.GetCredentialChangeTimeDetails#1", {}, false, function(body) {
+		callback(body.timestamp_last_password_change ? new Date(body.timestamp_last_password_change * 1000) : null,
+			body.timestamp_last_password_reset ? new Date(body.timestamp_last_password_reset * 1000) : null,
+			body.timestamp_last_email_change ? new Date(body.timestamp_last_email_change * 1000) : null);
+	});
+};
+
+SteamUser.prototype.getAuthSecret = function(callback) {
+	this._sendUnified("Credentials.GetAccountAuthSecret#1", {}, false, function(body) {
+		callback(body.secret_id, body.secret.toBuffer());
+	});
+};
+
+// Honestly not sure what this is for, but it works.
+/*SteamUser.prototype.getStreamingEncryptionKey = function(callback) {
+	this._send(SteamUser.EMsg.ClientUnlockStreaming, {}, function(body) {
+		if (body.eresult != SteamUser.EResult.OK) {
+			callback(Helpers.eresultError(body.eresult));
+			return;
+		}
+
+		callback(null, body.encryption_key);
+	});
+};*/
+
+SteamUser.prototype.requestPasswordChangeEmail = function(currentPassword, callback) {
+	var buf = new ByteBuffer(81 + 4); // a static 81 bytes for the password, and 4 for the int at the end
+	buf.writeCString(currentPassword);
+
+	for (var i = currentPassword.length + 1; i <= 81; i++) {
+		buf.writeByte(0);
+	}
+
+	buf.writeUint32(1); // dunno, maybe what type of change we want?
+	this._send(SteamUser.EMsg.ClientRequestChangeMail, buf.flip(), function(body) {
+		if (!callback) {
+			return;
+		}
+
+		callback(Helpers.eresultError(body.readUint32()));
+	});
+};
+
+SteamUser.prototype.changePassword = function(oldPassword, newPassword, code, callback) {
+	var buf = new ByteBuffer(1 + oldPassword.length + 1 + newPassword.length + 1 + code.length + 1, ByteBuffer.LITTLE_ENDIAN);
+	buf.writeCString(""); // unknown
+	buf.writeCString(oldPassword);
+	buf.writeCString(newPassword);
+	buf.writeCString(code);
+
+	this._send(SteamUser.EMsg.ClientPasswordChange3, buf.flip(), function(body) {
+		if (!callback) {
+			return;
+		}
+
+		callback(Helpers.eresultError(body.readUint32()));
+	});
+};
+
+SteamUser.prototype.changeEmail = function(options, callback) {
+	this._send(SteamUser.EMsg.ClientEmailChange4, {
+		"password": options.password,
+		"email": options.newEmail || options.email,
+		"code": options.code,
+		"final": !!options.code,
+		"newmethod": true,
+		"twofactor_code": options.twoFactorCode,
+		"sms_code": options.smsCode,
+		"client_supports_sms": true // this appears to be ignored; it asks for an SMS code regardless of value
+	}, function(body) {
+		if (!callback) {
+			return;
+		}
+
+		if (body.eresult != SteamUser.EResult.OK) {
+			callback(Helpers.eresultError(body.eresult));
+			return;
+		}
+
+		callback(null, !!body.requires_sms_code);
 	});
 };
 
@@ -157,4 +243,46 @@ SteamUser.prototype._handlers[SteamUser.EMsg.ClientWalletInfoUpdate] = function(
 SteamUser.prototype._handlers[SteamUser.EMsg.ClientVanityURLChangedNotification] = function(body) {
 	this.emit('vanityURL', body.vanity_url);
 	this.vanityURL = body.vanity_url;
+};
+
+SteamUser.prototype._handlers[SteamUser.EMsg.ClientUpdateGuestPassesList] = function(body) {
+	var eresult = body.readUint32();
+	if (eresult != SteamUser.EResult.OK) {
+		return;
+	}
+
+	var countToGive = body.readUint32();
+	var countToRedeem = body.readUint32();
+
+	for (var i = 0; i < countToGive; i++) {
+		BinaryKVParser.parse(body); // throw it away, I don't think this should be possible
+	}
+
+	var gifts = [], gift, key;
+	for (i = 0; i < countToRedeem; i++) {
+		gift = BinaryKVParser.parse(body).MessageObject;
+
+		for (key in gift) {
+			if (!gift.hasOwnProperty(key)) {
+				continue;
+			}
+
+			if (key == 'gid') {
+				gift[key] = gift[key].toString();
+			}
+
+			if (key.match(/^Time/)) {
+				gift[key] = gift[key] ? new Date(gift[key] * 1000) : null;
+			}
+		}
+
+		gifts.push(gift);
+	}
+
+	if (this.gifts && this.gifts.length == gifts.length) {
+		return; // nothing changed
+	}
+
+	this.emit('gifts', gifts);
+	this.gifts = gifts;
 };

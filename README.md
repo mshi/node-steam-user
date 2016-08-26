@@ -277,6 +277,22 @@ An object containing information about your Steam Wallet. `null` until [`wallet`
 
 An array containing license data for the packages which your Steam account owns. `null` until [`licenses`](#licenses-1) is emitted.
 
+### gifts
+
+An array containing gifts and guest passes you've received but haven't accepted (to your library or to your inventory) or declined.
+`null` until [`gifts`](#gifts-1) is emitted. Each object in the array contains these properties:
+
+- `gid` - The ID of this gift/guest pass, as a string (it's a 64-bit number)
+- `packageid` - The ID of the package which this gift/guest pass will grant
+- `TimeCreated` - A `Date` object for when this gift was purchased or guest pass was granted
+- `TimeExpiration` - A `Date` object for when this guest pass will expire (if it's a gift, this will be Mon Jan 18 2038 22:14:07 GMT-0500 (Eastern Standard Time))
+- `TimeSent` - A `Date` object for when this gift/guest pass was sent to you
+- `TimeAcked` - Appears to be the same as `TimeSent`
+- `TimeRedeemed` - Appears to always be `null`
+- `RecipientAddress` - Appears to always be an empty string
+- `SenderAddress` - Appears to always be an empty string
+- `SenderName` - The Steam display name of the user who sent you this gift
+
 ### users
 
 An object containing persona data about all Steam users we've encountered or requested data for. Key are 64-bit SteamIDs, values are identical to the objects received in the [`user`](#user) event.
@@ -363,6 +379,10 @@ You can provide either an entire sentryfile (preferred), or a Buffer containing 
 	- `loginKey` - If logging into an account with a login key, this is the account's login key
 	- `rememberPassword` - `true` if you want to get a login key which can be used in lieu of a password for subsequent logins. `false` or omitted otherwise.
 	- `logonID` - A number to identify this login. The official Steam client derives this from your machine's private IP (it's the `obfustucated_private_ip` field in `CMsgClientLogOn`). If you try to logon twice to the same account from the same public IP with the same `logonID`, the first session will be kicked with reason `SteamUser.EResult.LogonSessionReplaced`. Defaults to `0` if not specified.
+	- `machineName` - A string containing the name of this machine that you want to report to Steam. This will be displayed on steamcommunity.com when you view your games list (when logged in).
+	- `dontRememberMachine` - If you're providing an `authCode` but you don't want Steam to remember this sentryfile, pass `true` here.
+
+**v3.11.0 or later is required to use `machineName` or `dontRememberMachine`.**
 
 Logs onto Steam. The `CMClient`/`SteamClient` should **not** be already logged on, although as of v3.4.0 it can be
 connected. Omit the `details` object if you wish to login to an anonymous user account.
@@ -452,6 +472,74 @@ In order to trade, **all** of the following must be true:
 - `enabled` must be `true` (account-level restriction)
 - `enabledTime` must be at least 15 days ago (account-level restriction)
 - ONE of `machineTime` OR `twoFactorTime` must be at least 7 days ago (sentryfile-level restriction)
+
+### getCredentialChangeTimes(callback)
+- `callback` - A function to be called when the requested data is available
+    - `lastPasswordChange` - A `Date` object representing when your password was last changed, or `null` if never changed
+    - `lastPasswordReset` - A `Date` object representing when your password was last *reset* via the "forgot your password" utility, or `null` if never reset
+    - `lastEmailChange` - A `Date` object representing when your email address was last changed, or `null` if never changed
+
+**v3.10.0 or later is required to use this method**
+
+Gets when you last changed various account credentials.
+
+### getAuthSecret(callback)
+- `callback` - A function to be called when the requested data is available
+    - `secretID` - A numeric ID assigned to your key by Steam
+    - `key` - Your account's "auth secret", as a `Buffer`
+
+**v3.10.0 or later is required to use this method**
+
+Gets your account's auth secret, which is the pre-shared key used for in-home streaming.
+
+### requestPasswordChangeEmail(currentPassword[, callback])
+- `currentPassword` - Your account's current password, pre-change
+- `callback` - Optional. Called when the request completes.
+    - `err` - `null` on success, or an `Error` object on failure
+
+**v3.13.0 or later is required to use this method**
+
+Requests Steam to send you an email that contains a code you can supply to `changePassword` in order to change your
+account's password. If you have a Mobile Authenticator enabled, this will return success but not actually do anything.
+With 2FA, you should use a 2FA code instead of an email code.
+
+### changePassword(oldPassword, newPassword, code[, callback])
+- `oldPassword` - Your account's current (old) password
+- `newPassword` - Your desired new password
+- `code` - Either the code sent to your email from `requestPasswordChangeEmail` or your current Mobile Authenticator 2FA code (if you have 2FA on)
+- `callback` - Optional. Called when the request completes.
+    - `err` - `null` on success, or an `Error` object on failure
+
+**v3.13.0 or later is required to use this method**
+
+Changes your Steam account's password. This won't effect any trading restrictions.
+
+### changeEmail(options[, callback])
+- `options` - An object containing (some of) the following properties:
+    - `password` - Required. Your account's current password.
+    - `newEmail` - Required. The new email address you want to set on your account.
+    - `code` - Optional (at first). The verification code sent to your new email (see below).
+    - `twoFactorCode` - Optional (if you don't have 2FA enabled). If you do have 2FA (Mobile Authenticator) enabled, this is your current 2FA code (when confirming `code`).
+    - `smsCode` - Optional (if Steam doesn't want it). See below.
+- `callback` - Optional. Called when the request completes.
+    - `err` - `null` on success, or an `Error` object on failure
+    - `needsSmsCode` - `true` if Steam wants an SMS verification code (see below).
+
+**v3.13.0 or later is required to use this method.**
+
+Performs both steps in the two-step process that is changing your account's contact email. First, call this with only
+your `password` and `newEmail`. This will cause Steam to send an email to your new email address containing a
+verification code. Once you have that code, call this again with your `password`, `newEmail`, and `code`.
+
+If you have a Mobile Authenticator (2FA) enabled on your account, then for the second request you will need to include
+your current 2FA code as `twoFactorCode`. If you don't and `needsSmsCode` was `true` in the callback to the first request,
+then Steam has sent a verification code in an SMS to your phone. In this case, you need to provide that code as `smsCode`
+in the second request.
+
+`needsSmsCode` may still be `true` in the callback to the second request. In this case, simply ignore it. If you received
+no `err`, then your email was changed. The [`emailInfo`](#emailinfo-1) event will be emitted when your email changes.
+
+**Changing your account's email will start a 5-day trading cooldown.**
 
 ### gamesPlayed(apps)
 `apps` - An array, object, string, or number (see below)
@@ -648,6 +736,7 @@ available.
 **v1.9.0 or later is required to use this method**
 
 Changes our online status, and optionally your profile name. You need to call this after you logon or else you'll show up as offline.
+You won't receive any chat messages or persona data about your friends if you don't go online.
 
 ### setUIMode(mode)
 - `mode` - A value from [`EClientUIMode`](https://github.com/DoctorMcKay/node-steam-user/blob/master/resources/EClientUIMode.js)
@@ -656,12 +745,19 @@ Changes our online status, and optionally your profile name. You need to call th
 
 Sets your current UI mode, which displays as an icon next to your online status in Steam chat and the friends list.
 
-### addFriend(steamID)
+### addFriend(steamID[, callback])
 - `steamID` - The SteamID of the user you want to add as a friend, as a `SteamID` object or a string that can parse into one
+- `callback` - Optional. Called when Steam responds to this request.
+    - `err` - An `Error` object on failure, or `null` on success. If this is an `Error` object, it will have an `eresult` property.
+    - `name` - If successful, the current persona name of the user you added.
 
-**v1.9.0 or later is required to use this method**
+**v1.9.0 or later is required to use this method. v3.10.0 or later is required to use `callback`.**
 
 Sends a friend request to the user with the specified `SteamID`. If they've already sent you a friend request, accepts it.
+
+If you provide a callback, the `message` of the `err` will be `DuplicateName` and the `eresult` will be `14` if we are
+already friends with the requested user, or if we've sent them a friend request already that they haven't accepted or
+ignored. `message` will be `Blocked` and `eresult` will be `40` if they've blocked us.
 
 ### removeFriend(steamID)
 - `steamID` - The SteamID of the user you want to remove from your friends list, as a `SteamID` object or a string that can parse into one
@@ -705,6 +801,18 @@ Requests persona data for one or more users from Steam. The response will arrive
 **v1.9.0 or later is required to use this method**
 
 Gets the Steam Level for one or more Steam users (who do not have to be on your friends list).
+
+### getAliases(steamids, callback)
+- `steamids` - An array of `SteamID` objects or strings that can parse into `SteamID` objects
+- `callback` - Called when the requested data is available
+    - `err` - An `Error` object on failure, or `null` on success
+    - `results` - An object whose keys are 64-bit SteamIDs (as strings) and whose values are objects containing the following properties:
+        - `name` - The new name adopted by the user, as a string
+        - `name_since` - A `Date` object representing when the user adopted this name
+
+**v3.10.0 or later is required to use this method**
+
+Gets the last 10 persona names (including the current one) used by one or more Steam users (who do not have to be on your friends list).
 
 ### getGameBadgeLevel(appid, callback)
 - `appid` - The AppID of the game you want to get your badge level for
@@ -1049,6 +1157,20 @@ emitted.
 This isn't emitted for anonymous accounts. However, all anonymous user accounts have a license for package 17906
 automatically.
 
+### gifts
+- `gifts` - An array of gift objects
+
+Emitted on logon and when you receive/accept/decline a gift or guest pass. The [`gifts`](#gifts) property will be
+updated after this event is emitted.
+
+Guest Passes (do they even still exist?) are gifts (actually, gifts are Guest Passes with a very long expiration date).
+Consequently, both come through this event.
+
+Each object in the array is an oustanding gift or guest pass that was sent to you that you haven't accepted/declined yet.
+Only **outstanding** gifts show up here. Gifts that you stored in your inventory don't show up here.
+
+The structure of the objects in the array is defined in the documentation for the [`gifts`](#gifts) property.
+
 ### appOwnershipCached
 
 **v3.3.0 or later is required to use this event**
@@ -1249,7 +1371,7 @@ The `myFriendGroups` property will be updated **after** this event is emitted, s
 
 *This is an [ID event](#id-events).*
 
-Emitted when we receive either a friend message or a chat room message.
+Emitted when we receive either a friend message or a chat room message, as long as we're [online](#setpersonastate-name).
 
 ### friendMessage
 - `senderID` - The message sender, as a `SteamID` object
@@ -1259,7 +1381,7 @@ Emitted when we receive either a friend message or a chat room message.
 
 *This is an [ID event](#id-events).*
 
-Emitted when we receive a direct friend message (that is, not through a chat room).
+Emitted when we receive a direct friend message (that is, not through a chat room), as long as we're [online](#setpersonastate-name).
 
 ### friendTyping
 - `senderID` - The `SteamID` of the friend who's typing
@@ -1268,7 +1390,17 @@ Emitted when we receive a direct friend message (that is, not through a chat roo
 
 *This is an [ID event](#id-events).*
 
-Emitted when Steam notifies us that one of our friends is typing a message to us.
+Emitted when Steam notifies us that one of our friends is typing a message to us, as long as we're [online](#setpersonastate-name).
+
+### friendLeftConversation
+- `senderID` - The `SteamID` of the friend who closed our chat window
+
+**v3.10.0 or later is required to use this event**
+
+*This is an [ID event](#id-events).*
+
+Emitted when Steam notifies us that one of our friends with whom we've been chatting has closed our chat window, as
+long as we're [online](#setpersonastate-name).
 
 ### friendMessageEcho
 - `recipientID` - The `SteamID` of the user who rececived this message
@@ -1298,7 +1430,8 @@ Emitted when Steam echos us a notification that we're typing to a friend on anot
 
 *This is an [ID event](#id-events).*
 
-Emitted when we receive a chat message from a chat room. This is a special ID event. Any of the following are acceptable:
+Emitted when we receive a chat message from a chat room, as long as we're [online](#setpersonastate-name).
+This is a special ID event. Any of the following are acceptable:
 - `chatMessage`
 - `chatMessage#roomID`
 - `chatMessage#senderID`
@@ -1471,3 +1604,14 @@ Emitted when a chat room we're in is set so that only group officers can chat.
 *This is an [ID event](#id-events).*
 
 Emitted when a chat room we're in is set so that everyone can chat.
+
+### lobbyInvite
+- `inviterID` - The `SteamID` of the user who invited us to a Steam lobby
+- `lobbyID` - The `SteamID` of the lobby we were invited to
+
+**v3.9.0 or later is required to use this event**
+
+* This is an [ID event](#id-events).*
+
+Emitted when we're invited to a Steam lobby. The inviter should be currently playing the game associated with this
+lobby, so you can get the AppID of the associated game from their user persona data.

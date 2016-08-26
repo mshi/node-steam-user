@@ -37,8 +37,14 @@ SteamUser.prototype.logOn = function(details) {
 			"two_factor_code": details.twoFactorCode,
 			"should_remember_password": !!details.rememberPassword,
 			"obfustucated_private_ip": details.logonID || 0,
-			"protocol_version": 65575,
-			"supports_rate_limit_response": true
+			"protocol_version": 65575, // don't get rid of this, node-steam needs it.
+			"supports_rate_limit_response": details.accountName ? true : false,
+			"machine_name": details.accountName ? (details.machineName || "") : "",
+			"ping_ms_from_cell_search": details.accountName ? 4 + Math.floor(Math.random() * 30) : 0, // fake ping value
+			"client_language": details.accountName ? "english" : "",
+			"client_os_type": Helpers.getOsType(),
+			"anon_user_target_account_name": details.accountName ? "" : "anonymous",
+			"steamguard_dont_remember_computer": !!(details.accountName && details.authCode && details.dontRememberMachine)
 		};
 	}
 
@@ -71,7 +77,14 @@ SteamUser.prototype.logOn = function(details) {
 	}
 
 	var self = this;
-	this.storage.readFiles(filenames, function(err, files) {
+
+	if (this.storage) {
+		this.storage.readFiles(filenames, readFileCallback);
+	} else {
+		readFileCallback(null, []);
+	}
+
+	function readFileCallback(err, files) {
 		files = files || [];
 
 		files.forEach(function(file) {
@@ -110,6 +123,7 @@ SteamUser.prototype.logOn = function(details) {
 			}
 
 			self._logOnDetails.sha_sentryfile = sentry;
+			self._logOnDetails.eresult_sentryfile = sentry ? 1 : 0;
 		}
 
 		if(self._logOnDetails.sha_sentryfile && self._logOnDetails.sha_sentryfile.toString('hex') == 'aa57132157ac337ba2936099e22236062aafafdd') {
@@ -137,7 +151,7 @@ SteamUser.prototype.logOn = function(details) {
 			self._onConnected = onConnected.bind(self);
 			self.client.once('connected', self._onConnected);
 		}
-	});
+	}
 };
 
 function onConnected() {
@@ -150,7 +164,9 @@ function onConnected() {
 }
 
 SteamUser.prototype.logOff = SteamUser.prototype.disconnect = function(suppressLogoff) {
-	this.client.removeListener('connected', this._onConnected);
+	if (typeof this._onConnected === 'function') {
+		this.client.removeListener('connected', this._onConnected);
+	}
 
 	this._clearChangelistUpdateTimer();
 
@@ -186,7 +202,11 @@ SteamUser.prototype._getMachineID = function(localFile) {
 		}
 
 		var file = getRandomID();
-		this.storage.writeFile('machineid.bin', file);
+
+		if (this.storage) {
+			this.storage.writeFile('machineid.bin', file);
+		}
+
 		return file;
 	}
 
@@ -228,7 +248,9 @@ SteamUser.prototype._handlers[SteamUser.EMsg.ClientLogOnResponse] = function(bod
 			this._connectionCount = 0;
 			this._gcTokens = [];
 
-			this.storage.saveFile('cellid-' + Helpers.getInternalMachineID() + '.txt', body.cell_id);
+			if (this.storage) {
+				this.storage.saveFile('cellid-' + Helpers.getInternalMachineID() + '.txt', body.cell_id);
+			}
 
 			var parental = body.parental_settings ? Schema.ParentalSettings.decode(body.parental_settings) : null;
 			if (parental && parental.salt && parental.passwordhash) {
