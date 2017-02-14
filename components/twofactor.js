@@ -1,5 +1,6 @@
 var SteamUser = require('../index.js');
 var SteamTotp = require('steam-totp');
+var Crypto = require('crypto');
 
 /**
  * Start the process to enable TOTP two-factor authentication for your account
@@ -9,9 +10,8 @@ SteamUser.prototype.enableTwoFactor = function(callback) {
 	var self = this;
 
 	// Create a random device ID hash
-	var hash = require('crypto').createHash('sha1');
-	hash.update(Math.random().toString());
-	hash = hash.digest('hex');
+	var hash = Crypto.createHash('sha1').update(Math.random().toString())
+					.digest('hex').replace(/^([0-9a-f]{8})([0-9a-f]{4})([0-9a-f]{4})([0-9a-f]{4})([0-9a-f]{12}).*$/, '$1-$2-$3-$4-$5');
 
 	this._sendUnified("TwoFactor.AddAuthenticator#1", {
 		"steamid": self.steamID.getSteamID64(),
